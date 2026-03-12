@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.env/
+.env.*
+
+# Secrets
+.env
+.env.local
+.env.production
+
+# API keys
+config/secrets.py
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+
+# Node
+node_modules/
+dist/
+
+# Build files
+build/
+
+# IDE
+.vscode/
+.idea/
+
+# Uploaded files
+uploads/
+translations/
+
+# Environment files
+.env
+
+# Mac
+.DS_Store
+# Obsidian workspace
+.obsidian/
+
+# Generated translation outputs
+outputs/
