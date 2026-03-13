@@ -15,6 +15,7 @@
  * @property {JobStatus} status
  * @property {string|null} download_url
  * @property {string|null} error
+ * @property {number|null} progress
  */
 
 /**

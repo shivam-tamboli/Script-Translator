@@ -1,6 +1,6 @@
 import React from 'react';
 
-const StatusDisplay = ({ status, downloadUrl, error, onDownload, onRetry }) => {
+const StatusDisplay = ({ status, progress, downloadUrl, error, onDownload, onRetry }) => {
   if (!status) {
     return null;
   }
@@ -8,10 +8,27 @@ const StatusDisplay = ({ status, downloadUrl, error, onDownload, onRetry }) => {
   if (status === 'pending' || status === 'processing') {
     return (
       <div className="flex flex-col items-center justify-center py-6">
-        <div className="animate-spin rounded-full h-10 w-10 border-4 border-blue-500 border-t-transparent"></div>
-        <p className="mt-4 text-sm text-gray-600">
-          {status === 'pending' ? 'Preparing translation...' : 'Translating...'}
-        </p>
+        <div className="animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent"></div>
+        {progress > 0 ? (
+          <>
+            <div className="w-full max-w-md mt-4">
+              <div className="flex justify-between mb-1">
+                <span className="text-sm font-medium text-gray-700">Translating...</span>
+                <span className="text-sm font-medium text-gray-700">{progress}%</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2.5">
+                <div 
+                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
+                  style={{ width: `${progress}%` }}
+                ></div>
+              </div>
+            </div>
+          </>
+        ) : (
+          <p className="mt-4 text-sm text-gray-600">
+            {status === 'pending' ? 'Preparing translation...' : 'Translating...'}
+          </p>
+        )}
       </div>
     );
   }

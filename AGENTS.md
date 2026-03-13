@@ -6,11 +6,15 @@ This document provides guidelines for agents working on the Script Translator pr
 
 ## Project Overview
 
-Script Translator is a FastAPI-based REST API service that extracts text from PDF/DOCX files containing Marathi scripts and translates them to English using multiple translation providers.
+Script Translator is a FastAPI-based REST API service that extracts text from PDF/DOCX files containing Marathi scripts and translates them to English or Hindi using automatic provider selection.
+
+### Version: 1.1.0
 
 ### Core Features
 - Upload PDF or DOCX files containing Marathi text
-- Translate to English using OpenAI (default), Google Translate, DeepL, or IndicTrans
+- Translate to English (using OpenAI) or Hindi (using Sarvam AI)
+- **Automatic provider selection** based on target language
+- **Real-time translation progress** tracking (0-100%)
 - Download translated DOCX file
 - Async job processing with status polling
 
@@ -25,7 +29,7 @@ Script Translator is a FastAPI-based REST API service that extracts text from PD
 | **Data Validation** | Pydantic 2.5.3 |
 | **PDF Processing** | pdfplumber 0.10.4 |
 | **DOCX Processing** | python-docx 1.1.0 |
-| **Translation** | OpenAI GPT, DeepL, Google Translate, IndicTrans |
+| **Translation** | OpenAI (English), Sarvam AI (Hindi) |
 | **Testing** | pytest |
 
 ---
@@ -45,24 +49,80 @@ script-translator/
 │   │   └── schemas.py           # Pydantic models
 │   ├── services/
 │   │   ├── extractor.py         # PDF/DOCX text extraction
-│   │   ├── translator.py        # Translation orchestration
-│   │   ├── file_generator.py   # DOCX file generation
-│   │   ├── worker.py            # Background task processing
-│   │   └── providers/           # Translation providers
-│   │       ├── base.py          # Abstract base class
-│   │       ├── google.py        # Google Translate
-│   │       ├── openai.py        # OpenAI GPT
-│   │       ├── deepl.py         # DeepL
-│   │       └── indictrans.py    # IndicTrans
+│   │   ├── translator.py       # Translation orchestration with auto-selection
+│   │   ├── file_generator.py    # DOCX file generation
+│   │   ├── worker.py           # Background task processing with progress tracking
+│   │   └── providers/          # Translation providers
+│   │       ├── base.py         # Abstract base class
+│   │       ├── google.py       # Google Translate
+│   │       ├── openai.py       # OpenAI GPT (English)
+│   │       ├── deepl.py        # DeepL
+│   │       ├── indictrans.py   # IndicTrans
+│   │       └── sarvam.py       # Sarvam AI (Hindi) - NEW
 │   └── utils/
-│       ├── chunker.py           # Text chunking for large files
-│       └── logger.py            # Logging configuration
-├── uploads/                     # Uploaded files (created at runtime)
-├── outputs/                     # Translated files (created at runtime)
-├── .env                         # Environment variables
-├── .env.example                 # Environment template
-├── requirements.txt             # Python dependencies
-└── AGENTS.md                   # This file
+│       ├── chunker.py          # Text chunking for large files
+│       └── logger.py           # Logging configuration
+├── uploads/                    # Uploaded files (created at runtime)
+├── outputs/                   # Translated files (created at runtime)
+├── tests/                     # Test files - NEW
+│   ├── test_translation.py    # Integration tests
+│   └── sample_marathi.docx    # Sample test file
+├── .env                      # Environment variables
+├── .env.example              # Environment template
+├── requirements.txt          # Python dependencies
+└── AGENTS.md                # This file
+```
+
+---
+
+## Provider Selection Logic
+
+### Automatic Provider Selection
+
+The backend automatically selects the translation provider based on the target language:
+
+| Target Language | Provider | API Key | Description |
+|----------------|----------|---------|-------------|
+| English (`en`) | OpenAI | Required | Uses GPT-4o-mini model |
+| Hindi (`hi`) | Sarvam AI | Required | Uses sarvam-translate:v1 model |
+
+### Implementation
+
+```python
+# In translator.py - _get_provider method
+def _get_provider(self, target_lang: str = "en"):
+    """Get provider based on target language."""
+    if target_lang == "hi":
+        return SarvamProvider()
+    return OpenAIProvider(model=self.settings.openai_model)
+```
+
+### Backward Compatibility
+
+- The `provider` parameter in the upload API is **deprecated** but still accepted for backward compatibility
+- If provided, it is **ignored** - the system always auto-selects based on target language
+- The `/providers` endpoint still lists all available providers for informational purposes
+
+---
+
+## Translation Workflow
+
+```
+1. Client uploads file
+   POST /api/v1/translate with file, target_lang
+
+2. Server returns job_id
+   { "job_id": "uuid", "status": "pending" }
+
+3. Client polls for status every 2 seconds
+   GET /api/v1/translate/{job_id}
+
+4. Server processes in background
+   - Status: pending → processing → completed/failed
+   - Progress: 0% → 100% (after each chunk)
+
+5. When completed, client downloads
+   GET /api/v1/files/{filename}
 ```
 
 ---
@@ -79,7 +139,7 @@ Returns API information.
 ```json
 {
   "name": "Script Translator API",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "status": "running"
 }
 ```
@@ -106,12 +166,12 @@ Returns available translation providers.
 **Response:**
 ```json
 {
-  " {"name": "providers": [
-   google", "requires_api_key": false},
+  "providers": [
     {"name": "openai", "requires_api_key": true},
+    {"name": "sarvam", "requires_api_key": true},
+    {"name": "google", "requires_api_key": false},
     {"name": "deepl", "requires_api_key": true},
-    {"name": "indictrans", "requires_api_key": false},
-    {"name": "azure", "requires_api_key": true}
+    {"name": "indictrans", "requires_api_key": false}
   ]
 }
 ```
@@ -126,10 +186,11 @@ Upload a file and create a translation job.
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | file | File | Yes | - | PDF or DOCX file |
-| target_lang | string | No | "en" | Target language code |
-| provider | string | No | "openai" | Translation provider |
-| source_lang | string | No | "mr" | Source language code |
-| api_key | string | No | - | API key for paid providers |
+| target_lang | string | No | "en" | Target language (`en` or `hi`) |
+| source_lang | string | No | "mr" | Source language (only `mr` supported) |
+| api_key | string | No | - | API key (auto-selected by target) |
+
+**Note:** The `provider` parameter is deprecated and ignored. Provider is automatically selected based on `target_lang`.
 
 **Response:**
 ```json
@@ -144,7 +205,7 @@ Upload a file and create a translation job.
 - 400: "No file provided"
 - 400: "Unsupported file format. Supported: .pdf, .docx, .doc"
 - 400: "File too large. Maximum size: 10MB"
-- 401: API key required (for paid providers)
+- 401: API key required for the selected provider
 
 ### 5. Get Job Status
 ```
@@ -156,7 +217,8 @@ Poll for translation job status.
 ```json
 {
   "job_id": "uuid-string",
-  "status": "pending" | "processing",
+  "status": "processing",
+  "progress": 45,
   "download_url": null,
   "error": null
 }
@@ -167,7 +229,8 @@ Poll for translation job status.
 {
   "job_id": "uuid-string",
   "status": "completed",
-  "download_url": "/api/v1/files/filename_translated.docx",
+  "progress": 100,
+  "download_url": "/api/v1/files/filename_en_translated.docx",
   "error": null
 }
 ```
@@ -177,6 +240,7 @@ Poll for translation job status.
 {
   "job_id": "uuid-string",
   "status": "failed",
+  "progress": null,
   "download_url": null,
   "error": "Error description"
 }
@@ -198,24 +262,42 @@ Download the translated file.
 
 ---
 
-## Translation Workflow
+## Progress Tracking Design
 
+### Backend Implementation
+
+The progress is calculated based on chunks processed:
+
+```python
+# In worker.py
+chunks = chunk_text(text, chunk_size)
+total_chunks = len(chunks)
+
+for i, chunk in enumerate(chunks):
+    translated = translator.translate_text(...)
+    translated_chunks.append(translated)
+    
+    # Calculate and store progress
+    progress = int(((i + 1) / total_chunks) * 100)
+    jobs[job_id]["progress"] = progress
 ```
-1. Client uploads file
-   POST /api/v1/translate with file
 
-2. Server returns job_id
-   { "job_id": "uuid", "status": "pending" }
+### Progress Values
 
-3. Client polls for status
-   GET /api/v1/translate/{job_id}
+| Stage | Progress Value |
+|-------|---------------|
+| Started processing | 0 |
+| After chunk 1 of 10 | 10 |
+| After chunk 5 of 10 | 50 |
+| After chunk 9 of 10 | 90 |
+| Completed | 100 |
 
-4. Server processes in background
-   Status: pending → processing → completed/failed
+### API Response
 
-5. When completed, client downloads
-   GET /api/v1/files/{filename}
-```
+The `progress` field is included in job status responses:
+- `null` if not started or completed (for backward compatibility)
+- `0-99` during processing
+- `100` when completed
 
 ---
 
@@ -224,7 +306,7 @@ Download the translated file.
 | Status | Description |
 |--------|-------------|
 | `pending` | Job created, waiting to process |
-| `processing` | Translation in progress |
+| `processing` | Translation in progress, progress field shows 0-100 |
 | `completed` | Translation done, file ready for download |
 | `failed` | Translation failed |
 
@@ -240,15 +322,12 @@ Create a `.env` file in the project root:
 # Required
 MAX_FILE_SIZE_MB=10
 
-# OpenAI (default provider)
+# Required - English translations
 OPENAI_API_KEY=sk-your-openai-key
 OPENAI_MODEL=gpt-4o-mini
 
-# DeepL (optional)
-DEEPL_API_KEY=your-deepl-key
-
-# Azure Translator (optional)
-AZURE_TRANSLATOR_KEY=your-azure-key
+# Required - Hindi translations
+SARVAM_API_KEY=your-sarvam-api-key
 
 # Optional
 LOG_LEVEL=INFO
@@ -256,9 +335,16 @@ UPLOAD_DIR=uploads
 OUTPUT_DIR=outputs
 ```
 
+### API Key Requirements
+
+| Provider | Target Language | Environment Variable |
+|----------|----------------|---------------------|
+| OpenAI | English (`en`) | OPENAI_API_KEY |
+| Sarvam AI | Hindi (`hi`) | SARVAM_API_KEY |
+
 ### API Key Priority
 1. Request body `api_key` parameter
-2. Environment variable
+2. Environment variable (OPENAI_API_KEY or SARVAM_API_KEY)
 3. If neither provided and provider requires API key → 401 error
 
 ---
@@ -275,67 +361,9 @@ uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 
 ---
 
-## Building a Frontend
+## Frontend Implementation
 
-### Integration Points
-
-The frontend should integrate with these endpoints:
-
-| Action | Endpoint | Method |
-|--------|----------|--------|
-| Upload file | `/api/v1/translate` | POST |
-| Check status | `/api/v1/translate/{job_id}` | GET |
-| Download | `/api/v1/files/{filename}` | GET |
-
-### Frontend Requirements
-
-1. **File Upload**
-   - Accept PDF and DOCX files
-   - Validate file size (max 10MB)
-   - Send as multipart/form-data
-
-2. **Status Polling**
-   - Poll every 2 seconds
-   - Stop when status is `completed` or `failed`
-   - Handle errors gracefully
-
-3. **Download**
-   - Open download URL in new tab or trigger file download
-   - Filename format: `{original_name}_translated.docx`
-
-### Example Frontend API Service (JavaScript)
-
-```javascript
-const API_BASE = 'http://localhost:8000';
-
-async function uploadFile(file) {
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('target_lang', 'en');
-  formData.append('provider', 'openai');
-
-  const response = await fetch(`${API_BASE}/api/v1/translate`, {
-    method: 'POST',
-    body: formData,
-  });
-  return response.json();
-}
-
-async function checkJobStatus(jobId) {
-  const response = await fetch(`${API_BASE}/api/v1/translate/${jobId}`);
-  return response.json();
-}
-
-function downloadFile(filename) {
-  window.open(`${API_BASE}/api/v1/files/${filename}`, '_blank');
-}
-```
-
----
-
-## Frontend Implementation Plan
-
-### Chosen Frontend Framework
+### Frontend Framework
 
 | Category        | Technology      |
 | --------------- | ---------------|
@@ -345,209 +373,180 @@ function downloadFile(filename) {
 | **HTTP Client** | Axios          |
 | **Language**    | JavaScript     |
 
----
-
 ### Project Folder Structure
 
 ```
 script-translator-frontend/
-├── public/
 ├── src/
 │   ├── api/
 │   │   ├── axiosClient.js      # Axios instance with base URL from env
-│   │   └── translateApi.js     # API endpoint functions
+│   │   ├── translateApi.js     # API endpoint functions
+│   │   └── types.js            # Type definitions
 │   ├── components/
-│   │   ├── FileUpload.jsx      # Drag-drop zone, file display with size
-│   │   ├── TranslationOptions.jsx  # Source/target lang, provider select
-│   │   ├── StatusDisplay.jsx   # Spinner + "Translating..." / result
-│   │   └── Layout.jsx          # Header + main container
+│   │   ├── FileUpload.jsx      # Drag-drop zone
+│   │   ├── TranslationOptions.jsx  # Language selection
+│   │   ├── StatusDisplay.jsx   # Progress and status
+│   │   └── Layout.jsx          # Main container
 │   ├── hooks/
-│   │   └── useTranslation.js   # Upload + polling + download workflow
+│   │   └── useTranslation.js   # Translation workflow hook
 │   ├── pages/
 │   │   └── HomePage.jsx        # Main page
 │   ├── App.jsx
-│   ├── main.jsx
-│   └── index.css               # Tailwind imports
-├── .env                        # VITE_API_BASE_URL=http://localhost:8000
-├── package.json
-├── vite.config.js
-├── tailwind.config.js
-└── postcss.config.js
+│   └── main.jsx
+└── package.json
 ```
 
----
+### Frontend User Flow
 
-### UI Components and Responsibilities
+```
+1. User opens app
+   → Sees "Source: Marathi" (static label)
+   → Sees "Target Language" dropdown (English / Hindi)
+
+2. User selects file (PDF/DOCX)
+   → Shows filename + size
+
+3. User selects target language
+   → English or Hindi from dropdown
+
+4. User clicks "Translate"
+   → Progress bar appears (0% → 100%)
+   → Updates every 2 seconds via polling
+
+5. Translation complete
+   → Success message + "Download" button
+
+6. User clicks Download
+   → File downloads with target code in filename
+```
+
+### UI Components
 
 | Component | Responsibility |
 |-----------|----------------|
-| `Layout.tsx` | Main wrapper with header, responsive container |
-| `FileUpload.tsx` | Drag-drop file zone, shows selected filename + size, validates type/size |
-| `TranslationOptions.tsx` | Dropdowns for source language, target language, provider |
-| `StatusDisplay.tsx` | Shows current state: idle, uploading, translating (spinner), completed, error |
-| `useTranslation.ts` | Custom hook handling full workflow: upload → poll → download |
-
----
+| `Layout.jsx` | Main wrapper with header |
+| `FileUpload.jsx` | Drag-drop file zone, shows filename + size |
+| `TranslationOptions.jsx` | Static Marathi source, English/Hindi target dropdown |
+| `StatusDisplay.jsx` | Progress bar (0-100%), spinner, completion status |
+| `useTranslation.js` | Full workflow: upload → poll → download |
 
 ### UI States
 
 | State | Display |
 |-------|---------|
-| **Idle** | File upload zone, options visible, "Translate" button enabled |
-| **File Selected** | Shows filename + file size (e.g., "document.pdf (2.3 MB)") |
-| **Uploading** | Button shows "Uploading...", disabled |
-| **Translating** | Spinner + "Translating..." text, button disabled |
-| **Completed** | Success message + "Download" button |
+| **Idle** | File upload zone, language options, "Translate" button |
+| **File Selected** | Shows filename + file size |
+| **Translating** | Spinner + Progress bar + percentage (0-100%) |
+| **Completed** | Success icon + "Download" button |
 | **Error** | Error message + "Try Again" button |
 
----
+### Progress Bar Implementation
 
-### API Integration Strategy
-
-**Environment Variable:**
-```
-VITE_API_BASE_URL=http://localhost:8000
-```
-
-**API Client Setup:**
-```typescript
-// src/api/axiosClient.ts
-import axios from 'axios';
-
-const axiosClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000',
-  timeout: 30000,
-});
-```
-
-**Endpoints Used:**
-
-| Action | Endpoint | Method | Request/Response |
-|--------|----------|--------|------------------|
-| Upload file | `/api/v1/translate` | POST | multipart/form-data → `{ job_id, status, message }` |
-| Check status | `/api/v1/translate/{job_id}` | GET | - → `{ job_id, status, download_url, error }` |
-| Download | `/api/v1/files/{filename}` | GET | - → Blob (application/octet-stream) |
-| List providers | `/providers` | GET | - → `{ providers: [{ name, requires_api_key }] }` |
-
----
-
-### Translation Job Workflow
-
-```
-1. User selects file (PDF/DOCX)
-   ↓
-2. User clicks "Translate"
-   ↓
-3. POST /api/v1/translate (multipart/form-data)
-   ← Returns: { job_id, status: "pending" }
-   ↓
-4. Poll GET /api/v1/translate/{job_id} every 2 seconds
-   ↓
-5. Status progression: pending → processing → completed / failed
-   ↓
-6. If completed: Show "Download" button
-   ↓
-7. User clicks "Download" → GET /api/v1/files/{filename} → Browser downloads file
+```jsx
+// In StatusDisplay.jsx
+{status === 'processing' && (
+  <div className="w-full">
+    <div className="animate-spin rounded-full h-8 w-8 border-blue-500 border-t-transparent"></div>
+    {progress > 0 && (
+      <>
+        <div className="w-full bg-gray-200 rounded-full h-2.5">
+          <div className="bg-blue-600 h-2.5 rounded-full" 
+               style={{width: `${progress}%`}}></div>
+        </div>
+        <p>Translating... {progress}%</p>
+      </>
+    )}
+  </div>
+)}
 ```
 
 ---
 
-### Polling Strategy for Job Status
+## Testing Strategy
 
-**Implementation:**
-- Use `setInterval` to poll every 2000ms (2 seconds)
-- Stop polling when status is `completed` or `failed`
-- Clean up interval on component unmount
-- Handle network errors gracefully with retry logic
+### Backend Tests
 
-**Polling Logic:**
-```typescript
-// In useTranslation hook
-useEffect(() => {
-  if (!jobId || status === 'completed' || status === 'failed') return;
-  
-  const interval = setInterval(async () => {
-    const response = await translateApi.getJobStatus(jobId);
-    setStatus(response.status);
-    if (response.download_url) setDownloadUrl(response.download_url);
-    if (response.error) setError(response.error);
-  }, 2000);
-  
-  return () => clearInterval(interval);
-}, [jobId, status]);
+Run tests with:
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=src --cov-report=html
 ```
+
+### Integration Tests
+
+Tests verify:
+- English translation uses OpenAI
+- Hindi translation uses Sarvam AI
+- Progress updates from 0 to 100 during translation
+- Output filenames include target language code
+
+Tests use `@pytest.mark.skipif` decorators to skip when API keys are not configured:
+```python
+@pytest.mark.skipif(
+    not os.getenv("OPENAI_API_KEY"),
+    reason="OPENAI_API_KEY not configured"
+)
+def test_english_translation():
+    # Test English translation flow
+
+@pytest.mark.skipif(
+    not os.getenv("SARVAM_API_KEY"),
+    reason="SARVAM_API_KEY not configured"
+)
+def test_hindi_translation():
+    # Test Hindi translation flow
+```
+
+### Manual Testing Checklist
+
+| # | Test | Expected Result |
+|---|------|----------------|
+| 1 | Upload PDF, select English | Uses OpenAI, filename has `_en_translated.docx` |
+| 2 | Upload PDF, select Hindi | Uses Sarvam, filename has `_hi_translated.docx` |
+| 3 | View progress during translation | Shows 0% → 100% |
+| 4 | Download translated file | Correct file downloads |
+| 5 | Source shows "Marathi" | Static label, not dropdown |
+| 6 | No provider selector | Hidden from UI |
 
 ---
 
-### Translated File Download Process
+## Output Filename Format
 
-**Implementation:**
-```typescript
-const handleDownload = async (filename: string) => {
-  const blob = await translateApi.downloadFile(filename);
-  
-  // Create temporary download link
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  
-  // Cleanup
-  document.body.removeChild(link);
-  window.URL.revokeObjectURL(url);
-};
-```
+| Target Language | Filename Example |
+|----------------|------------------|
+| English | `document_en_translated.docx` |
+| Hindi | `document_hi_translated.docx` |
 
-**Download Flow:**
-1. Status becomes `completed`
-2. `download_url` contains `/api/v1/files/{filename}`
-3. User clicks "Download" button
-4. Frontend calls GET with `responseType: 'blob'`
-5. Browser triggers file download
+Format: `{original_name}_{target_lang}_translated.docx`
 
 ---
 
-### Error Handling Approach
+## Error Handling
 
 | Error Type | Source | User Message |
 |------------|--------|--------------|
 | No file | Upload validation | "Please select a file" |
 | Unsupported format | Upload validation | "Only PDF and DOCX files are supported" |
 | File too large | Upload validation | "File exceeds 10MB limit" |
+| Missing OpenAI key | English translation | "API key required for OpenAI provider" |
+| Missing Sarvam key | Hindi translation | "API key required for Sarvam AI provider" |
 | 400 Bad Request | API response | Show backend error message |
-| 401 Unauthorized | API response | "API key required" (backend handles this) |
+| 401 Unauthorized | API response | "API key required" |
 | 404 Not Found | Polling | "Translation job not found" |
 | Network error | Any | "Connection error. Please try again." |
 
-**Error Handling Strategy:**
-- Form validation before upload
-- Axios response interceptor for API errors
-- Inline error messages displayed in StatusDisplay component
-- "Try Again" button resets state to idle
-
 ---
 
-### CORS Configuration
+## Security Considerations
 
-The backend allows requests from:
-- `http://localhost:3000`
-- `http://127.0.0.1:3000`
-
----
-
-### Frontend Requirements Summary
-
-1. **Single file upload** - Only one file at a time
-2. **No history** - Only handles current translation job
-3. **No API key input** - Backend handles authentication
-4. **Responsive design** - Support desktop and mobile
-5. **Light theme** - Simple, clean UI
-6. **Environment variable** - Use `VITE_API_BASE_URL` for backend URL
-7. **Default provider** - OpenAI (backend has API key configured)
-8. **File size display** - Show filename and size before upload
-9. **Spinner** - Show "Translating..." with spinner during polling
+- Validate file extensions (.pdf, .docx, .doc)
+- Sanitize filenames to prevent directory traversal
+- Never log API keys
+- Limit file size (default: 10MB)
+- Use HTTPS in production
 
 ---
 
@@ -579,50 +578,27 @@ from ..services.translator import TranslationService
 from ..core.config import get_settings
 ```
 
-### Error Handling
-Use custom exceptions and FastAPI exception handlers:
-```python
-class ExtractionError(Exception):
-    """Raised when text extraction fails."""
-    pass
-
-@app.exception_handler(ExtractionError)
-async def extraction_exception_handler(request, exc):
-    return JSONResponse(status_code=500, content={"detail": str(exc)})
-```
-
----
-
-## Testing
-
-```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=src --cov-report=html
-
-# Run specific test
-pytest tests/test_translator.py::test_extract_text
-```
-
----
-
-## Security Considerations
-
-- Validate file extensions (.pdf, .docx, .doc)
-- Sanitize filenames to prevent directory traversal
-- Never log API keys
-- Limit file size (default: 10MB)
-- Use HTTPS in production
-
 ---
 
 ## Development Rules for AI Agents
 
-1. **Do NOT modify the backend API** - The existing endpoints are stable
-2. **Use the existing providers** - OpenAI is the default, Google is free
+1. **Do NOT modify the backend API endpoints** - They are stable
+2. **Provider is auto-selected** - Based on target_lang, NOT user-selected
 3. **Follow the job workflow** - Upload → Poll → Download
 4. **Handle all job statuses** - pending, processing, completed, failed
-5. **Validate inputs** - File type and size before upload
-6. **Use environment variables** - Store API keys in `.env`, not in code
+5. **Include progress in status** - Always return progress field (0-100 or null)
+6. **Validate inputs** - File type and size before upload
+7. **Use environment variables** - Store API keys in `.env`, not in code
+8. **Update version** - Increment to 1.1.0 for this upgrade
+
+---
+
+## Changelog
+
+### Version 1.1.0
+- Added multi-language support (English and Hindi)
+- Added automatic provider selection (OpenAI for English, Sarvam AI for Hindi)
+- Added real-time translation progress tracking (0-100%)
+- Added output filename with target language code
+- Simplified frontend UI (static Marathi source, no provider selector)
+- Updated documentation

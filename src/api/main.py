@@ -1,7 +1,15 @@
 import uuid
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, Request, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import (
+    FastAPI,
+    Request,
+    UploadFile,
+    File,
+    HTTPException,
+    BackgroundTasks,
+    Form,
+)
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -52,12 +60,15 @@ async def api_key_exception_handler(request: Request, exc: APIKeyError):
 async def translate_script(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    target_lang: str = "en",
-    provider: ProviderEnum = ProviderEnum.OPENAI,
-    source_lang: str = "mr",
-    api_key: Optional[str] = None,
+    target_lang: str = Form("en"),
+    source_lang: str = Form("mr"),
+    provider: ProviderEnum = Form(ProviderEnum.OPENAI),
+    api_key: Optional[str] = Form(None),
 ):
-    """Translate a script file using specified provider."""
+    """Translate a script file. Provider is auto-selected based on target_lang."""
+    logger.info(
+        f"Received request: target_lang={target_lang}, source_lang={source_lang}"
+    )
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
 
@@ -91,7 +102,6 @@ async def translate_script(
         "status": JobStatus.PENDING,
         "original_filename": safe_filename,
         "file_path": str(file_path),
-        "provider": provider,
         "source_lang": source_lang,
         "target_lang": target_lang,
         "api_key": api_key,
@@ -102,7 +112,6 @@ async def translate_script(
         job_id,
         str(file_path),
         safe_filename,
-        provider,
         source_lang,
         target_lang,
         api_key,
@@ -128,6 +137,7 @@ async def get_translation_status(job_id: str):
         status=job["status"],
         download_url=job.get("download_url"),
         error=job.get("error"),
+        progress=job.get("progress"),
     )
 
 

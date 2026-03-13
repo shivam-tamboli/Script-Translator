@@ -10,14 +10,12 @@ const HomePage = () => {
     file,
     sourceLang,
     targetLang,
-    provider,
     status,
+    progress,
     downloadUrl,
     error,
     setFile,
-    setSourceLang,
     setTargetLang,
-    setProvider,
     startTranslation,
     reset,
   } = useTranslation();
@@ -61,10 +59,7 @@ const HomePage = () => {
         <TranslationOptions
           sourceLang={sourceLang}
           targetLang={targetLang}
-          provider={provider}
-          onSourceLangChange={setSourceLang}
           onTargetLangChange={setTargetLang}
-          onProviderChange={setProvider}
           disabled={isUploading}
         />
 
@@ -90,6 +85,7 @@ const HomePage = () => {
 
         <StatusDisplay
           status={status}
+          progress={progress}
           downloadUrl={downloadUrl}
           error={error}
           onDownload={handleDownload}

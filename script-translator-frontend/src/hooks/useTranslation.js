@@ -5,12 +5,12 @@ const POLLING_INTERVAL = 2000;
 
 export const useTranslation = () => {
   const [file, setFile] = useState(null);
-  const [sourceLang, setSourceLang] = useState('mr');
+  const [sourceLang] = useState('mr');
   const [targetLang, setTargetLang] = useState('en');
-  const [provider, setProvider] = useState('openai');
   
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState(null);
+  const [progress, setProgress] = useState(null);
   const [downloadUrl, setDownloadUrl] = useState(null);
   const [error, setError] = useState(null);
   const [isPolling, setIsPolling] = useState(false);
@@ -21,6 +21,10 @@ export const useTranslation = () => {
     try {
       const response = await translateApi.getJobStatus(id);
       setStatus(response.status);
+      
+      if (response.progress !== undefined && response.progress !== null) {
+        setProgress(response.progress);
+      }
       
       if (response.download_url) {
         setDownloadUrl(response.download_url);
@@ -67,13 +71,13 @@ export const useTranslation = () => {
 
     setError(null);
     setStatus(null);
+    setProgress(null);
     setDownloadUrl(null);
 
     try {
       const response = await translateApi.uploadFile(file, {
         sourceLang,
         targetLang,
-        provider,
       });
 
       setJobId(response.job_id);
@@ -83,12 +87,13 @@ export const useTranslation = () => {
       const message = err instanceof Error ? err.message : 'Upload failed';
       setError(message);
     }
-  }, [file, sourceLang, targetLang, provider]);
+  }, [file, sourceLang, targetLang]);
 
   const reset = useCallback(() => {
     setFile(null);
     setJobId(null);
     setStatus(null);
+    setProgress(null);
     setDownloadUrl(null);
     setError(null);
     setIsPolling(false);
@@ -102,15 +107,13 @@ export const useTranslation = () => {
     file,
     sourceLang,
     targetLang,
-    provider,
     status,
+    progress,
     downloadUrl,
     error,
     isPolling,
     setFile,
-    setSourceLang,
     setTargetLang,
-    setProvider,
     startTranslation,
     reset,
   };

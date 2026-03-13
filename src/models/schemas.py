@@ -15,3 +15,4 @@ class JobStatusResponse(BaseModel):
     status: JobStatus
     download_url: Optional[str] = None
     error: Optional[str] = None
+    progress: Optional[int] = None
