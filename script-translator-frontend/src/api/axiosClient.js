@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://script-translator.onrender.com';
+console.log('[API] Base URL:', API_BASE_URL);
 
 const axiosClient = axios.create({
   baseURL: API_BASE_URL,
