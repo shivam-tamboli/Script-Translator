@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 from pydantic_settings import BaseSettings
 
 
@@ -14,6 +14,17 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
     workers: int = 4
+
+    cors_origins: Union[list[str], str] = "http://localhost:3000,http://127.0.0.1:3000"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if isinstance(self.cors_origins, str):
+            self.cors_origins = [
+                origin.strip()
+                for origin in self.cors_origins.split(",")
+                if origin.strip()
+            ]
 
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-4o-mini"

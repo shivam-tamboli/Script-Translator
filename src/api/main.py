@@ -1,3 +1,4 @@
+import os
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -26,6 +27,8 @@ from ..models.schemas import TranslateResponse, JobStatusResponse
 settings = get_settings()
 logger = setup_logger(level=settings.log_level)
 
+PORT = int(os.environ.get("PORT", 8000))
+
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
@@ -34,12 +37,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-    ],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
